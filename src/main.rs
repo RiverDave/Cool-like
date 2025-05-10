@@ -1,34 +1,21 @@
+mod grammar;
 use logos::Logos;
+use crate::grammar::Token;
 
 
-#[derive(Logos, Debug, PartialEq)]
-pub enum Token {
+//TODO: We should have a generic callback, that adds text to a symbol table on each match
 
-    #[regex("[0-9]+")]
-    Num,
-
-    #[regex(r"[ \t\n\f]+")]
-    Whitespace,
-
-
-    // #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*")]
-    // Identifier,
-
-    //variables - identifiers
-    #[regex("[A-Z][a-z0-9_]*")]
-    Types,
-
-    #[regex("[a-z][a-z0-9_]*")]
-    ObjectIdentifier
-
-}
+//TODO: Move this to a separate file later, All core
+//components of this compilers must be separated from main
 
 
 fn main() {
 
-    let lex = Token::lexer("Type_23");
-    lex.into_iter().for_each(|e| {
-        println!("{:#?}", e.unwrap());
-
-    })
+    //Logos seems to match every possible maximum regex per token
+    //We need to wrap that API somehow so that it can yield lexemes accurate
+    //to our requirements.
+    let lexical_placeholder = Token::lexer("23a");
+    lexical_placeholder.into_iter().for_each(|e| {
+        println!("{:?}", e);
+    });
 }
