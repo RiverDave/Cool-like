@@ -1,4 +1,6 @@
 mod grammar;
+
+use std::fmt::Debug;
 use logos::Logos;
 use crate::grammar::Token;
 
@@ -8,14 +10,14 @@ use crate::grammar::Token;
 //TODO: Move this to a separate file later, All core
 //components of this compilers must be separated from main
 
-
 fn main() {
 
-    //Logos seems to match every possible maximum regex per token
-    //We need to wrap that API somehow so that it can yield lexemes accurate
-    //to our requirements.
+    let mut tokens : Vec<Result<Token, grammar::LexicalError>> = vec![];
+
     let lexical_placeholder = Token::lexer("23a");
     lexical_placeholder.into_iter().for_each(|e| {
         println!("{:?}", e);
+        tokens.push(e);
     });
+    
 }
