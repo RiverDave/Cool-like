@@ -14,7 +14,7 @@ fn main() {
 
     let mut tokens : Vec<Result<Token, grammar::LexicalError>> = vec![];
 
-    let lexical_placeholder = Token::lexer("23a");
+    let mut lexical_placeholder = Token::lexer("identifier 123");
     lexical_placeholder.into_iter().for_each(|e| {
         println!("{:?}", e);
         tokens.push(e);

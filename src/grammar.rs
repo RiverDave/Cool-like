@@ -1,4 +1,4 @@
-use logos::{Logos, Skip, Filter};
+use logos::{Filter, FilterResult, Logos, Skip};
 
 #[derive(Debug, Clone, PartialEq)]
 struct Position {
@@ -6,10 +6,9 @@ struct Position {
     row: u64,
 }
 
-
 #[derive(Debug, PartialEq, Clone)]
 pub struct ErrorMetadata {
-//TODO, Use lifetime specifier here, hold a &str preferably
+    //TODO, Use lifetime specifier here, hold a &str preferably
     slice: String,
     pos: Position,
     msg: String,
@@ -26,10 +25,11 @@ pub enum LexicalError {
 #[derive(Default)]
 pub struct LexerControlLayer<'a> {
     recovery_mode: bool,
+    comment_mode: bool,
     current_invalid_token_slice: Option<&'a str>,
-//TODO, Use lifetime specifier here, hold a &str preferably
+    //TODO, Use lifetime specifier here, hold a &str preferably
     invalid_report: String,
-    error_type: LexicalError
+    error_type: LexicalError,
 }
 
 #[derive(Logos, Debug, PartialEq)]
@@ -37,7 +37,7 @@ pub struct LexerControlLayer<'a> {
 #[logos(extras = LexerControlLayer<'s>)]
 pub enum Token {
     // Type identifier: starts with uppercase letter
-     #[regex(r"([[:alpha:]_])([[:alnum:]_])*", process_identifier)]
+    #[regex(r"([[:alpha:]_])([[:alnum:]_])*", process_identifier)]
     Identifier,
 
     //TODO: We should have a generic callback, that adds each token src input to a symbol table on each match
@@ -54,17 +54,26 @@ pub enum Token {
     Assign,
 }
 
-
-fn process_identifier(lex: &mut logos::Lexer<Token>) -> Filter<Token> {
+fn process_identifier(lex: &mut logos::Lexer<Token>) -> FilterResult<Token, LexicalError> {
     let slice = lex.slice();
+    let src = lex.source();
 
     if lex.extras.recovery_mode {
-    //The logic here not only applies to id's but also to other tokens caught in between
-    //Recovery mode
-        return Filter::Skip;
+        let remainder_start = lex.span().end;
+        if src[remainder_start..].chars().next().is_none() {
+            //end of input, dump error token
+            return FilterResult::Error(LexicalError::GenericError);
+        }
+
+        //The following logic here not only applies to id's but also to other tokens caught in between
+        //Recovery mode,
+
+        //TODO: add more metadata
+        return FilterResult::Skip; 
     }
+
     //return token with metadata as usual here.
-    todo!()
+    FilterResult::Emit(Token::Identifier)
 }
 
 fn process_number(lex: &mut logos::Lexer<Token>) -> Filter<Token> {
@@ -83,14 +92,13 @@ fn process_number(lex: &mut logos::Lexer<Token>) -> Filter<Token> {
             if slice.chars().next().unwrap().is_ascii_digit()
                 && (next_char.is_alphabetic() || next_char == '_')
             {
-                //after encountering an error we should implement some kind of recovery so that:
-                //Our lexer starts from a valid position back again (whitespace)
                 lex.extras.recovery_mode = true;
                 lex.extras.invalid_report = format!(
                     "Number {} immediately followed by identifier character '{}'",
                     slice, next_char
                 );
-                // lex.extras.current_invalid_token_slice = 
+
+                //handle end of input
 
                 return Filter::Skip;
             }
@@ -105,7 +113,7 @@ fn process_whitespace_or_eof(lex: &mut logos::Lexer<Token>) -> Result<Skip, Lexi
     if lex.extras.recovery_mode {
         lex.extras.recovery_mode = false;
         //TODO: emit invalid token metadata here...
-        
+
         //NOTE: Why are we cloning this?
         return Err(lex.extras.error_type.clone());
     }
@@ -115,19 +123,41 @@ fn process_whitespace_or_eof(lex: &mut logos::Lexer<Token>) -> Result<Skip, Lexi
 
 //TODO: Evaluate the need for this function, for now errors are left behind after
 //we reach end of input, fix that
-pub fn untangle_remaining_error(lex: &mut logos::Lexer<Token>) -> Result<(), LexicalError> {
-    if lex.extras.recovery_mode {
-        //In theory we expect only one error to be present
-        //TODO: Add metadata to the error type
-        return Err(lex.extras.error_type.clone());
-    }
-
-    Ok(())
-}
+// pub fn untangle_remaining_error(lex: &mut logos::Lexer<Token>) -> Result<(), LexicalError> {
+//     if lex.extras.recovery_mode {
+//         //In theory we expect only one error to be present
+//         //TODO: Add metadata to the error type
+//         return Err(lex.extras.error_type.clone());
+//     }
+//
+//     Ok(())
+// }
 
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn basic_identifiers() {
+        let mut lex = Token::lexer("123-123");
+        assert_eq!(lex.next().unwrap(), Ok(Token::Number));
+        assert_eq!(lex.slice(), "123");
+        assert_eq!(lex.next().unwrap(), Ok(Token::Minus));
+        assert_eq!(lex.slice(), "-");
+        assert_eq!(lex.next().unwrap(), Ok(Token::Number));
+        assert_eq!(lex.slice(), "123");
+        assert!(lex.next().is_none());
+    }
+
+    #[test]
+    fn arithmetic_tokens() {
+        let mut lex = Token::lexer("identifier 123");
+        assert_eq!(lex.next().unwrap(), Ok(Token::Identifier));
+        assert_eq!(lex.slice(), "identifier");
+        assert_eq!(lex.next().unwrap(), Ok(Token::Number));
+        assert_eq!(lex.slice(), "123");
+        assert!(lex.next().is_none());
+    }
 
     #[test]
     fn special_symbols() {
@@ -144,8 +174,20 @@ mod test {
         //Weirdly enough Logos handles this very weirdly -> It seems to apply the
         //maximum bunch principle and lexes => {number, identifier} when it should => {invalid}
 
-        let mut lex = Token::lexer("23a");
+        let mut lex = Token::lexer("23a ");
         assert!(lex.next().unwrap().is_err());
         assert!(lex.next().is_none()); // end of iteration
+    }
+
+    #[test]
+    fn test_end_of_input_error() {
+        let mut lex = Token::lexer("123a");
+        assert!(lex.next().unwrap().is_err());
+        
+        // Check no more tokens
+        assert!(lex.next().is_none());
+        
+        // Check for pending errors
+        // assert!(check_for_pending_errors(&mut lex).is_ok());
     }
 }
