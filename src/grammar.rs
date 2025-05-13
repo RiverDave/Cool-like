@@ -2,8 +2,14 @@ use logos::{Filter, FilterResult, Logos, Skip};
 
 #[derive(Debug, Clone, PartialEq)]
 struct Position {
-    col: u64,
-    row: u64,
+    col: usize,
+    row: usize,
+}
+
+impl Default for Position {
+    fn default() -> Self {
+        return Self { col: 1, row: 1 };
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -23,18 +29,19 @@ pub enum LexicalError {
 }
 
 #[derive(Default)]
-pub struct LexerControlLayer<'a> {
+pub struct LexerControlLayer {
     recovery_mode: bool,
     comment_mode: bool,
-    current_invalid_token_slice: Option<&'a str>,
-    //TODO, Use lifetime specifier here, hold a &str preferably
-    invalid_report: String,
+    //Ideally a slice, however cannot due considering rust limitations
+    //(Can't concat slices)
+    current_invalid_token_slice: Option<String>,
+    current_report: String,
     error_type: LexicalError,
 }
 
 #[derive(Logos, Debug, PartialEq)]
 #[logos(error = LexicalError)]
-#[logos(extras = LexerControlLayer<'s>)]
+#[logos(extras = LexerControlLayer)]
 pub enum Token {
     // Type identifier: starts with uppercase letter
     #[regex(r"([[:alpha:]_])([[:alnum:]_])*", process_identifier)]
@@ -59,17 +66,38 @@ fn process_identifier(lex: &mut logos::Lexer<Token>) -> FilterResult<Token, Lexi
     let src = lex.source();
 
     if lex.extras.recovery_mode {
-        let remainder_start = lex.span().end;
-        if src[remainder_start..].chars().next().is_none() {
-            //end of input, dump error token
-            return FilterResult::Error(LexicalError::GenericError);
-        }
-
-        //The following logic here not only applies to id's but also to other tokens caught in between
+        //NOTE: The following logic here not only applies to id's but also to other tokens caught in between
         //Recovery mode,
 
+        let remainder_start = lex.span().end;
+        //FIXME: This should be removed in the case we can mutate our lexer after the end of the input
+
+        let prev_slice = lex
+            .extras
+            .current_invalid_token_slice
+            .as_deref()
+            .unwrap_or_default();
+
+        let mut new_invalid_str = prev_slice.to_string();
+        new_invalid_str.push_str(slice);
+        lex.extras.current_invalid_token_slice = Some(new_invalid_str);
+
+        //current invalid token in recovery mode reached end of input, dump token
+        if src[remainder_start..].chars().next().is_none() {
+            let err = ErrorMetadata {
+                slice: lex
+                    .extras
+                    .current_invalid_token_slice
+                    .take()
+                    .unwrap_or_default(),
+                pos: Position::default(),
+                msg: lex.extras.current_report.to_string(),
+            };
+            return FilterResult::Error(LexicalError::InvalidTokenSequence(err));
+        }
+
         //TODO: add more metadata
-        return FilterResult::Skip; 
+        return FilterResult::Skip;
     }
 
     //return token with metadata as usual here.
@@ -83,23 +111,25 @@ fn process_number(lex: &mut logos::Lexer<Token>) -> Filter<Token> {
 
     let slice = lex.slice();
 
-    // Get the next character after this token, if any
+
     let source = lex.source();
     let remainder_start = lex.span().end;
 
+    // Get the next character after this token, if any, If it's an alphanumeric or _, we should
+    // enter recovery mode => Since we can't have a number followed by an alphanumeric or _
     if remainder_start < source.len() {
         if let Some(next_char) = source[remainder_start..].chars().next() {
             if slice.chars().next().unwrap().is_ascii_digit()
                 && (next_char.is_alphabetic() || next_char == '_')
             {
                 lex.extras.recovery_mode = true;
-                lex.extras.invalid_report = format!(
+                lex.extras.current_report = format!(
                     "Number {} immediately followed by identifier character '{}'",
                     slice, next_char
                 );
+                lex.extras.current_invalid_token_slice = Some(slice.to_string());
 
                 //handle end of input
-
                 return Filter::Skip;
             }
         }
@@ -183,10 +213,10 @@ mod test {
     fn test_end_of_input_error() {
         let mut lex = Token::lexer("123a");
         assert!(lex.next().unwrap().is_err());
-        
+
         // Check no more tokens
         assert!(lex.next().is_none());
-        
+
         // Check for pending errors
         // assert!(check_for_pending_errors(&mut lex).is_ok());
     }
